@@ -1,0 +1,15 @@
+[project]
+name = "connstrict"
+version = "0.1.0"
+description = "Strict-by-default linter and parser for database connection strings"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "neil-knoll" }]
+
+[project.scripts]
+connstrict = "connstrict.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
