@@ -10,6 +10,9 @@ authors = [{ name = "neil-knoll" }]
 [project.scripts]
 connstrict = "connstrict.cli:main"
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
