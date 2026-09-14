@@ -217,6 +217,32 @@ def test_multiple_issues_are_all_collected():
     assert any("duplicate query parameter" in i for i in issues)
 
 
+def test_postgres_without_sslmode_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="requires a 'sslmode' parameter"):
+        parse("postgresql://app_user:secret@db.internal/orders")
+
+
+def test_postgres_alias_without_sslmode_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="requires a 'sslmode' parameter"):
+        parse("postgres://app_user:secret@db.internal/orders")
+
+
+def test_postgres_without_sslmode_is_warning_when_lenient():
+    result = parse("postgresql://app_user:secret@db.internal/orders", lenient=True)
+    assert "sslmode" not in result.params
+    assert any("requires a 'sslmode' parameter" in w for w in result.warnings)
+
+
+def test_postgres_with_sslmode_has_no_warnings():
+    result = parse("postgresql://app_user:secret@db.internal/orders?sslmode=require")
+    assert result.warnings == []
+
+
+def test_mysql_does_not_require_sslmode():
+    result = parse("mysql://root@localhost/app")
+    assert result.warnings == []
+
+
 def test_normalized_percent_encodes_special_characters():
     result = parse("postgresql://app_user:p@ss@db.internal/orders", lenient=True)
     assert result.normalized() == "postgresql://app_user:p%40ss@db.internal/orders"

@@ -31,6 +31,14 @@ KNOWN_SCHEMES = {
 # because the parser also uses them as structural separators.
 RESERVED_USERINFO_CHARS = set(":/?#[]@")
 
+# Params that are conventionally required for a given scheme because leaving
+# them off means driver-default behavior that's silently wrong for
+# production use, not because the driver itself demands them.
+REQUIRED_PARAMS: dict[str, tuple[str, ...]] = {
+    "postgres": ("sslmode",),
+    "postgresql": ("sslmode",),
+}
+
 
 class ConnectionStringError(ValueError):
     """Raised when a connection string fails validation."""
@@ -215,6 +223,13 @@ def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
             if key in params:
                 issues.append(f"duplicate query parameter '{key}'")
             params[key] = value
+
+    for required in REQUIRED_PARAMS.get(scheme, ()):
+        if required not in params:
+            issues.append(
+                f"scheme '{scheme}' requires a '{required}' parameter, "
+                "since without one drivers silently fall back to an insecure default"
+            )
 
     if issues and not lenient:
         raise ConnectionStringError(issues)

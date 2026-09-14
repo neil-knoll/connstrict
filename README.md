@@ -58,6 +58,14 @@ $ connstrict "mysql://root@localhost/app?ssl-mode=REQUIRED&ssl-mode=DISABLED"
 connstrict: error: duplicate query parameter 'ssl-mode'
 ```
 
+Postgres connection strings without `sslmode` are rejected too, since the
+default a bare connection falls back to (`prefer`) is silently insecure:
+
+```
+$ connstrict "postgresql://app_user:s3cret@db.internal/orders"
+connstrict: error: scheme 'postgresql' requires a 'sslmode' parameter, since without one drivers silently fall back to an insecure default
+```
+
 Read from stdin instead of an argument (handy for checking a value already
 sitting in an environment variable, without putting it on the process's
 command line where it would show up in `ps`):
@@ -87,6 +95,10 @@ no connection string was given at all.
   character (`@`, `:`, `/`, `?`, `#`)
 - no duplicate query parameters
 - no stray fragment (`#...`), which most drivers ignore silently
+- scheme-specific required parameters are present (currently: `sslmode`
+  for `postgres`/`postgresql`, since without it most Postgres drivers
+  fall back to `prefer`, which connects over plaintext if TLS isn't
+  available rather than failing)
 
 Every one of these is an error by default and a warning under `--lenient`.
 
