@@ -89,6 +89,39 @@ class ConnectionString:
         return f"{self.scheme}://{authority}{path}{query}"
 
 
+def diff(a: ConnectionString, b: ConnectionString) -> list[str]:
+    """Describe every field where two parsed connection strings disagree.
+
+    Compares the parsed fields rather than the raw text, so cosmetic
+    differences like percent-encoding, param order, or a trailing slash
+    don't show up as drift - only changes that would actually change what
+    a driver connects to or with.
+    """
+    lines: list[str] = []
+
+    def note(field: str, left: object, right: object) -> None:
+        if left != right:
+            lines.append(f"{field}: {left!r} -> {right!r}")
+
+    note("scheme", a.scheme, b.scheme)
+    note("username", a.username, b.username)
+    note("password", a.password, b.password)
+    note("host", a.host, b.host)
+    note("port", a.port, b.port)
+    note("database", a.database, b.database)
+
+    for key in sorted(set(a.params) | set(b.params)):
+        left = a.params.get(key)
+        right = b.params.get(key)
+        if left == right:
+            continue
+        left_repr = repr(left) if key in a.params else "(absent)"
+        right_repr = repr(right) if key in b.params else "(absent)"
+        lines.append(f"param '{key}': {left_repr} -> {right_repr}")
+
+    return lines
+
+
 def _fatal(issues: list[str], message: str) -> None:
     raise ConnectionStringError(issues + [message])
 

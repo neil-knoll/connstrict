@@ -82,7 +82,29 @@ $ connstrict --quiet "$DATABASE_URL" || exit 1
 ```
 
 Exit codes: `0` on success, `1` when the string fails validation, `2` when
-no connection string was given at all.
+no connection string was given at all, `3` when `--diff` finds drift
+between the two strings.
+
+## Comparing two connection strings
+
+Pass `--diff` with a second connection string to see what changed between
+them - useful for checking whether a "just rotated the password" deploy
+actually only touched the password, or whether an env var someone hand-
+edited quietly drifted from what's in the provisioning script:
+
+```
+$ connstrict "postgresql://app@db.internal/orders?sslmode=require" \
+    --diff "postgresql://app@db.internal:6543/orders?sslmode=disable"
+port: None -> 6543
+param 'sslmode': 'require' -> 'disable'
+```
+
+The comparison is on the parsed fields, not the raw text, so differences
+in percent-encoding, query parameter order, or a trailing slash on the
+database path don't get reported as drift. Both strings go through the
+same validation as a normal check, including `--lenient` if you pass it;
+if either one fails to parse, `--diff` reports that error and stops
+before comparing anything.
 
 ## What it checks
 

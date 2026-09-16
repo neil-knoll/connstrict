@@ -1,6 +1,6 @@
 import pytest
 
-from connstrict.parser import ConnectionStringError, parse
+from connstrict.parser import ConnectionStringError, diff, parse
 
 
 def test_well_formed_string_has_no_warnings():
@@ -256,3 +256,42 @@ def test_normalized_wraps_ipv6_host_in_brackets():
 def test_normalized_omits_absent_parts():
     result = parse("redis://cache.internal")
     assert result.normalized() == "redis://cache.internal"
+
+
+def test_diff_of_identical_strings_is_empty():
+    a = parse("postgresql://app_user:secret@db.internal/orders?sslmode=require")
+    b = parse("postgresql://app_user:secret@db.internal/orders?sslmode=require")
+    assert diff(a, b) == []
+
+
+def test_diff_ignores_percent_encoding_differences():
+    a = parse("postgresql://app_user:p%40ss@db.internal/orders?sslmode=require")
+    b = parse("postgresql://app_user:p@ss@db.internal/orders?sslmode=require", lenient=True)
+    assert diff(a, b) == []
+
+
+def test_diff_reports_changed_host_and_port():
+    a = parse("postgresql://db-a.internal:5432/orders?sslmode=require")
+    b = parse("postgresql://db-b.internal:5433/orders?sslmode=require")
+    changes = diff(a, b)
+    assert "host: 'db-a.internal' -> 'db-b.internal'" in changes
+    assert "port: 5432 -> 5433" in changes
+
+
+def test_diff_reports_added_and_removed_params():
+    a = parse("postgresql://db.internal/orders?sslmode=require")
+    b = parse("postgresql://db.internal/orders?sslmode=require&connect_timeout=10")
+    changes = diff(a, b)
+    assert "param 'connect_timeout': (absent) -> '10'" in changes
+
+
+def test_diff_reports_changed_param_value():
+    a = parse("postgresql://db.internal/orders?sslmode=require")
+    b = parse("postgresql://db.internal/orders?sslmode=disable")
+    assert diff(a, b) == ["param 'sslmode': 'require' -> 'disable'"]
+
+
+def test_diff_reports_password_change():
+    a = parse("postgresql://app_user:old-secret@db.internal/orders?sslmode=require")
+    b = parse("postgresql://app_user:new-secret@db.internal/orders?sslmode=require")
+    assert diff(a, b) == ["password: 'old-secret' -> 'new-secret'"]
