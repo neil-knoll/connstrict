@@ -58,6 +58,8 @@ def _run_diff(raw: str, other: str, *, lenient: bool, quiet: bool) -> int:
         for result in (left, right):
             for warning in result.warnings:
                 print(f"connstrict: warning: {warning}", file=sys.stderr)
+            for advisory in result.advisories:
+                print(f"connstrict: advisory: {advisory}", file=sys.stderr)
 
     changes = diff(left, right)
     if not changes:
@@ -100,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         for warning in result.warnings:
             print(f"connstrict: warning: {warning}", file=sys.stderr)
+        for advisory in result.advisories:
+            print(f"connstrict: advisory: {advisory}", file=sys.stderr)
         print("ok")
 
     print(result.normalized())

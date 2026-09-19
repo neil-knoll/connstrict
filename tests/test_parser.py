@@ -295,3 +295,39 @@ def test_diff_reports_password_change():
     a = parse("postgresql://app_user:old-secret@db.internal/orders?sslmode=require")
     b = parse("postgresql://app_user:new-secret@db.internal/orders?sslmode=require")
     assert diff(a, b) == ["password: 'old-secret' -> 'new-secret'"]
+
+
+def test_plaintext_password_gets_credential_advisory():
+    result = parse("postgresql://app_user:secret@db.internal/orders?sslmode=require")
+    assert any("plaintext credential" in a for a in result.advisories)
+
+
+def test_credential_advisory_is_not_a_warning_and_does_not_raise():
+    result = parse("postgresql://app_user:secret@db.internal/orders?sslmode=require")
+    assert result.warnings == []
+
+
+def test_credential_advisory_present_even_when_lenient():
+    result = parse(
+        "postgresql://app_user:secret@db.internal/orders?sslmode=require", lenient=True
+    )
+    assert any("plaintext credential" in a for a in result.advisories)
+
+
+def test_no_credential_advisory_without_a_password():
+    result = parse("mysql://root@localhost/app")
+    assert result.advisories == []
+
+
+def test_no_credential_advisory_without_userinfo_at_all():
+    result = parse("redis://cache.internal/0")
+    assert result.advisories == []
+
+
+@pytest.mark.parametrize(
+    "password",
+    ["${DB_PASSWORD}", "$DB_PASSWORD", "<DB_PASSWORD>"],
+)
+def test_no_credential_advisory_for_env_var_placeholder(password):
+    result = parse(f"postgresql://app_user:{password}@db.internal/orders?sslmode=require")
+    assert result.advisories == []

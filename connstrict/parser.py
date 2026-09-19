@@ -59,6 +59,7 @@ class ConnectionString:
     params: dict[str, str]
     raw: str
     warnings: list[str] = dataclasses.field(default_factory=list)
+    advisories: list[str] = dataclasses.field(default_factory=list)
 
     def normalized(self) -> str:
         """Rebuild a canonical, correctly percent-encoded connection string."""
@@ -126,6 +127,26 @@ def _fatal(issues: list[str], message: str) -> None:
     raise ConnectionStringError(issues + [message])
 
 
+def _looks_like_env_reference(value: str) -> bool:
+    """Whether a value is a placeholder pointing at an env var, not a secret.
+
+    Covers the styles people actually paste into connection strings:
+    ``${DB_PASSWORD}`` and ``$DB_PASSWORD`` (shell/docker-compose) and
+    ``<DB_PASSWORD>`` (generic template). Deliberately skips Windows-style
+    ``%DB_PASSWORD%``: '%' is already percent-encoding syntax in this parser,
+    so a literal '%' in userinfo has already been mangled by `unquote` by
+    the time this check runs, making that style unreliable to detect here.
+    """
+    if value.startswith("${") and value.endswith("}"):
+        return True
+    if value.startswith("<") and value.endswith(">") and len(value) > 2:
+        return True
+    if value.startswith("$"):
+        name = value[1:]
+        return bool(name) and all(ch.isalnum() or ch == "_" for ch in name)
+    return False
+
+
 def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
     """Parse and validate a connection string.
 
@@ -138,6 +159,7 @@ def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
     always raise, regardless of `lenient`.
     """
     issues: list[str] = []
+    advisories: list[str] = []
     text = raw
 
     if text != text.strip():
@@ -191,6 +213,13 @@ def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
 
         username = unquote(username_raw)
         password = unquote(password_raw) if password_raw is not None else None
+
+        if password and not _looks_like_env_reference(password):
+            advisories.append(
+                "password looks like a plaintext credential; consider "
+                "referencing an environment variable instead, e.g. "
+                "${DB_PASSWORD}"
+            )
 
     if hostport.startswith("["):
         end = hostport.find("]")
@@ -277,4 +306,5 @@ def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
         params=params,
         raw=raw,
         warnings=issues,
+        advisories=advisories,
     )

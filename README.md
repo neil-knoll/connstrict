@@ -106,6 +106,24 @@ same validation as a normal check, including `--lenient` if you pass it;
 if either one fails to parse, `--diff` reports that error and stops
 before comparing anything.
 
+## Plaintext credential advisories
+
+If a connection string has a literal password rather than a reference to an
+environment variable, `connstrict` prints an advisory suggesting the
+substitution - this is informational only, so it's printed on both success
+and `--lenient` recovery and never affects the exit code:
+
+```
+$ connstrict "postgresql://app_user:s3cret@db.internal/orders?sslmode=require"
+connstrict: advisory: password looks like a plaintext credential; consider referencing an environment variable instead, e.g. ${DB_PASSWORD}
+ok
+postgresql://app_user:s3cret@db.internal/orders?sslmode=require
+```
+
+A password already written as `${DB_PASSWORD}`, `$DB_PASSWORD`, or
+`<DB_PASSWORD>` is assumed to already be a placeholder and isn't flagged.
+`--quiet` suppresses this along with every other status line.
+
 ## What it checks
 
 - a recognized scheme (`postgres`, `postgresql`, `mysql`, `mongodb`,
