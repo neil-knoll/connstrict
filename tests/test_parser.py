@@ -324,6 +324,95 @@ def test_no_credential_advisory_without_userinfo_at_all():
     assert result.advisories == []
 
 
+def test_keyvalue_adonet_string_parses_fields():
+    result = parse("Server=tcp:db.internal,1433;Database=orders;User ID=app;Password=${DB_PASSWORD};Encrypt=true")
+    assert result.style == "keyvalue"
+    assert result.host == "db.internal"
+    assert result.port == 1433
+    assert result.database == "orders"
+    assert result.username == "app"
+    assert result.password == "${DB_PASSWORD}"
+    assert result.params == {"Encrypt": "true"}
+    assert result.warnings == []
+
+
+def test_keyvalue_odbc_aliases_and_braced_value():
+    result = parse("Driver={SQL Server; Native};UID=app;PWD=x;Server=db;Port=1434;Initial Catalog=o")
+    assert result.username == "app"
+    assert result.port == 1434
+    assert result.database == "o"
+    assert result.params == {"Driver": "SQL Server; Native"}
+
+
+def test_keyvalue_single_trailing_semicolon_is_fine():
+    assert parse("Server=db;Database=o;").warnings == []
+
+
+def test_keyvalue_quoted_value_with_semicolon_and_doubled_quote():
+    result = parse('Server=db;Password="a;b""c"')
+    assert result.password == 'a;b"c'
+
+
+def test_keyvalue_unquoted_semicolon_in_value_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="no '=value'"):
+        parse("Server=db;Password=a;b")
+
+
+def test_keyvalue_duplicate_key_across_aliases_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="duplicate key"):
+        parse("Server=a;Data Source=b")
+
+
+def test_keyvalue_duplicate_key_last_wins_when_lenient():
+    result = parse("Server=a;server=b", lenient=True)
+    assert result.host == "b"
+    assert any("duplicate key" in w for w in result.warnings)
+
+
+def test_keyvalue_stray_semicolon_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="stray ';'"):
+        parse("Server=db;;Database=o")
+
+
+def test_keyvalue_unterminated_quote_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="unterminated quoted"):
+        parse('Server=db;Password="abc')
+
+
+def test_keyvalue_missing_host_always_raises():
+    with pytest.raises(ConnectionStringError, match="missing a host"):
+        parse("Database=o;User ID=app", lenient=True)
+
+
+def test_keyvalue_invalid_port_is_strict_error():
+    with pytest.raises(ConnectionStringError, match="not a valid port"):
+        parse("Server=db,99999")
+
+
+def test_keyvalue_normalized_quotes_every_value():
+    result = parse('Data Source=db,1433;Initial Catalog=o;uid=app;pwd="a;b"')
+    assert result.normalized() == (
+        'Server="db,1433";Database="o";User ID="app";Password="a;b"'
+    )
+
+
+def test_keyvalue_normalized_round_trips():
+    first = parse('Server=db,1433;Database=o;Password="a;b""c";Encrypt=true')
+    second = parse(first.normalized())
+    assert diff(first, second) == []
+
+
+def test_keyvalue_diff_compares_across_spellings():
+    a = parse("Server=db,1433;Database=o")
+    b = parse("Data Source=db;Port=1433;Initial Catalog=o")
+    assert diff(a, b) == []
+
+
+def test_keyvalue_plaintext_password_gets_advisory():
+    result = parse("Server=db;Password=hunter2")
+    assert any("plaintext credential" in a for a in result.advisories)
+
+
 @pytest.mark.parametrize(
     "password",
     ["${DB_PASSWORD}", "$DB_PASSWORD", "<DB_PASSWORD>"],

@@ -124,6 +124,31 @@ A password already written as `${DB_PASSWORD}`, `$DB_PASSWORD`, or
 `<DB_PASSWORD>` is assumed to already be a placeholder and isn't flagged.
 `--quiet` suppresses this along with every other status line.
 
+## ADO.NET and ODBC key-value strings
+
+A string with no `://` but with `=` in it is read as `Key=Value;Key=Value`
+instead of a URL:
+
+```
+$ connstrict 'Server=tcp:db.internal,1433;Database=orders;User ID=app;Password=${DB_PASSWORD};Encrypt=true'
+ok
+Server="db.internal,1433";Database="orders";User ID="app";Password="${DB_PASSWORD}";Encrypt="true"
+```
+
+The usual aliases are folded (`Data Source`, `Address`, `Addr` and
+`Network Address` for `Server`; `Initial Catalog` for `Database`; `UID` and
+`User` for `User ID`; `PWD` for `Password`; `Port` for a `,port` suffix), so
+`--diff` compares a SqlClient string against an ODBC one field by field.
+Values may be quoted with `'`, `"` or `{}` and escape the closing character
+by doubling it. Other keys are passed through untouched as parameters.
+
+In strict mode these are errors: duplicate keys (including across aliases),
+an empty segment such as `;;`, a segment with no `=`, an unterminated
+quote, text after a closing quote, and a bad port. The last one catches an
+unquoted `;` inside a password, which otherwise splits it in two. One
+trailing `;` is normal and accepted. A missing host always fails. The
+normalized output quotes every value.
+
 ## What it checks
 
 - a recognized scheme (`postgres`, `postgresql`, `mysql`, `mongodb`,

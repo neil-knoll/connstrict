@@ -60,9 +60,30 @@ class ConnectionString:
     raw: str
     warnings: list[str] = dataclasses.field(default_factory=list)
     advisories: list[str] = dataclasses.field(default_factory=list)
+    style: str = "url"
+
+    def _normalized_keyvalue(self) -> str:
+        def quoted(value: str) -> str:
+            # Always quoting is unambiguous for both ADO.NET and ODBC readers,
+            # and avoids guessing which characters each one treats as special.
+            return '"' + value.replace('"', '""') + '"'
+
+        server = self.host if self.port is None else f"{self.host},{self.port}"
+        parts = [("Server", server)]
+        if self.database:
+            parts.append(("Database", self.database))
+        if self.username is not None:
+            parts.append(("User ID", self.username))
+        if self.password is not None:
+            parts.append(("Password", self.password))
+        parts.extend(self.params.items())
+        return ";".join(f"{k}={quoted(v)}" for k, v in parts)
 
     def normalized(self) -> str:
         """Rebuild a canonical, correctly percent-encoded connection string."""
+        if self.style == "keyvalue":
+            return self._normalized_keyvalue()
+
         authority = ""
         if self.username is not None:
             authority += quote(self.username, safe="")
@@ -147,8 +168,169 @@ def _looks_like_env_reference(value: str) -> bool:
     return False
 
 
+def _check_port(port_str: str | None, issues: list[str]) -> int | None:
+    if not port_str:
+        return None
+    if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+        issues.append(f"port '{port_str}' is not a valid port number 1-65535")
+        return None
+    return int(port_str)
+
+
+def _read_value(text: str, i: int, issues: list[str]) -> tuple[str, int]:
+    """Read one value starting at `i`; return it and the index after its ';'.
+
+    Quoted values ('...', "..." or ODBC-style {...}) may contain ';' and
+    escape the closing character by doubling it.
+    """
+    n = len(text)
+    while i < n and text[i] in " \t":
+        i += 1
+
+    if i < n and text[i] in "\"'{":
+        closer = "}" if text[i] == "{" else text[i]
+        i += 1
+        buf: list[str] = []
+        while True:
+            if i >= n:
+                issues.append("unterminated quoted value")
+                return "".join(buf), n
+            ch = text[i]
+            if ch == closer:
+                if i + 1 < n and text[i + 1] == closer:
+                    buf.append(closer)
+                    i += 2
+                    continue
+                i += 1
+                break
+            buf.append(ch)
+            i += 1
+        while i < n and text[i] in " \t":
+            i += 1
+        if i < n and text[i] != ";":
+            issues.append("unexpected text after a quoted value")
+            while i < n and text[i] != ";":
+                i += 1
+        return "".join(buf), i + 1
+
+    end = text.find(";", i)
+    if end == -1:
+        end = n
+    return text[i:end].strip(), end + 1
+
+
+def _split_keyvalue(text: str, issues: list[str]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    n = len(text)
+    i = 0
+    while i < n:
+        j = i
+        while j < n and text[j] not in "=;":
+            j += 1
+        key = text[i:j].strip()
+
+        if j >= n or text[j] == ";":
+            if key:
+                issues.append(f"segment '{key}' has no '=value'")
+                pairs.append((key, ""))
+            elif j < n:
+                issues.append("connection string has an empty segment (stray ';')")
+            i = j + 1
+            continue
+
+        value, i = _read_value(text, j + 1, issues)
+        if not key:
+            issues.append("connection string has a value with no key before '='")
+            continue
+        pairs.append((key, value))
+    return pairs
+
+
+# ADO.NET and ODBC each have their own spellings for the same handful of
+# settings; fold them so a diff between a SqlClient string and an ODBC one
+# compares host to host.
+_KEY_ALIASES = {
+    "server": "host",
+    "data source": "host",
+    "address": "host",
+    "addr": "host",
+    "network address": "host",
+    "host": "host",
+    "port": "port",
+    "database": "database",
+    "initial catalog": "database",
+    "user id": "username",
+    "uid": "username",
+    "user": "username",
+    "username": "username",
+    "password": "password",
+    "pwd": "password",
+}
+
+
+def _parse_keyvalue(
+    raw: str, text: str, issues: list[str], lenient: bool
+) -> ConnectionString:
+    """Parse an ADO.NET / ODBC style ``Key=Value;Key=Value`` string."""
+    fields: dict[str, str] = {}
+    params: dict[str, str] = {}
+    seen: set[str] = set()
+
+    for key, value in _split_keyvalue(text, issues):
+        folded = " ".join(key.lower().split())
+        if folded in seen:
+            issues.append(f"duplicate key '{key}'")
+        seen.add(folded)
+        canonical = _KEY_ALIASES.get(folded)
+        if canonical is None:
+            params[key] = value
+        else:
+            fields[canonical] = value
+
+    server = fields.get("host", "")
+    if server.lower().startswith("tcp:"):
+        server = server[4:]
+    port_str = fields.get("port")
+    if "," in server:
+        server, _, port_str = server.rpartition(",")
+        port_str = port_str.strip()
+    host = server.strip()
+    if not host:
+        _fatal(issues, "connection string is missing a host")
+    port = _check_port(port_str, issues)
+
+    password = fields.get("password")
+    advisories: list[str] = []
+    if password and not _looks_like_env_reference(password):
+        advisories.append(
+            "password looks like a plaintext credential; consider "
+            "referencing an environment variable instead, e.g. "
+            "${DB_PASSWORD}"
+        )
+
+    if issues and not lenient:
+        raise ConnectionStringError(issues)
+
+    return ConnectionString(
+        scheme="",
+        username=fields.get("username"),
+        password=password,
+        host=host,
+        port=port,
+        database=fields.get("database") or None,
+        params=params,
+        raw=raw,
+        warnings=issues,
+        advisories=advisories,
+        style="keyvalue",
+    )
+
+
 def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
     """Parse and validate a connection string.
+
+    Strings without '://' but with '=' are read as ADO.NET / ODBC
+    ``Key=Value;`` style instead of URLs.
 
     Every irregularity found (unescaped separators, duplicate query keys,
     stray whitespace, an unrecognized scheme, ...) is collected. If the
@@ -167,6 +349,8 @@ def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
         text = text.strip()
 
     if "://" not in text:
+        if "=" in text:
+            return _parse_keyvalue(raw, text, issues, lenient)
         _fatal(issues, "missing '://' scheme separator")
 
     scheme, _, rest = text.partition("://")
@@ -241,12 +425,7 @@ def parse(raw: str, *, lenient: bool = False) -> ConnectionString:
     if not host:
         _fatal(issues, "connection string is missing a host")
 
-    port: int | None = None
-    if port_str:
-        if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
-            issues.append(f"port '{port_str}' is not a valid port number 1-65535")
-        else:
-            port = int(port_str)
+    port = _check_port(port_str, issues)
 
     fragment: str | None = None
     path_part = tail
